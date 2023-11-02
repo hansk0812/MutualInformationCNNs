@@ -12,6 +12,8 @@ from model import Net
 
 from model import MutualInfo
 
+import numpy as np
+
 def train(args, model, device, train_loader, optimizer, epoch):
     model, mi = model
     model.train()
@@ -106,6 +108,7 @@ def main():
                        transform=transform)
     dataset2 = datasets.MNIST('../data', train=False,
                        transform=transform)
+    
     train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 

@@ -5,15 +5,16 @@ from torch import nn
 from torch.nn import functional as F
 
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes=10):
         super(Net, self).__init__()
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.dropout1 = nn.Dropout(0.25)
         self.dropout2 = nn.Dropout(0.5)
         self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
-
+        self.fc2 = nn.Linear(128, num_classes)
+        
+        self.num_classes = num_classes
         self.layer_activations = []
 
     def forward(self, x):
@@ -57,20 +58,23 @@ class MutualInfo(Net):
         super().__init__()        
         
         self.n_bins = n_bins
+        
+        self.grad_layers = [self.conv1, self.conv2, self.fc1, self.fc2]
+
         #self.layer_map = ["conv", "conv", "dropout", "fc", "dropout", "fc", "ypred"]
+    
+    def H(self, x):
+        return -np.sum(x * np.log(np.max(x - 1e-8, 0)))
 
     def bin(self, unique_values, unique_counts):
         
-        print (unique_values.shape, unique_counts.shape)
-
         # n_bins bins = n_bins + 1 ranges; precision = 6 decimal places for float32 and arange
         bin_size = (max(unique_values) - min(unique_values)) / float(self.n_bins + 1)
+        
         bins = np.arange(min(unique_values), max(unique_values) + bin_size/2., bin_size) 
         bins = np.round(bins[1:], decimals=6)
         
         binned_data = {}
-        probs = [0 for _ in range(self.n_bins)]
-
         bin_idx = 0        
         
         for unique_a, a_count in zip(unique_values, unique_counts):
@@ -87,13 +91,19 @@ class MutualInfo(Net):
         for bin_idx in range(self.n_bins):
             if bin_idx not in binned_data:
                 binned_data[bin_idx] = [[np.nan, 0]]
+        
+        return binned_data
+    
+    def get_marginal_probability(self, binned_data):
+ 
+        probs = [0 for _ in range(self.n_bins)]
 
         for bin_idx in range(self.n_bins):
             probs[bin_idx] = np.sum(np.array(binned_data[bin_idx])[:,1])
         probs = np.array(probs) 
         probs /= float(probs.sum())
         
-        print (unique_values.shape, unique_counts.shape, probs)
+        return probs
 
     def calculate_mi(self, x, f, y):
 
@@ -107,18 +117,40 @@ class MutualInfo(Net):
         unique_y, counts_y = np.unique(y, return_counts=True)        
         p_y = counts_y / counts_y.sum()
         
-        self.bin(unique_x, counts_x)
-        self.bin(unique_f, counts_f)
-        self.bin(unique_y, counts_y)
-        exit()      
+        x_binned = self.bin(unique_x, counts_x)
+        f_binned = self.bin(unique_f, counts_f)
+        y_binned = self.bin(unique_y, counts_y)
+        
+        p_x = self.get_marginal_probability(x_binned)
+        p_f = self.get_marginal_probability(f_binned)
+        p_y = self.get_marginal_probability(y_binned)
+        
+        H_X = self.H(p_x)
+        H_Y = self.H(p_y)
+        H_F = self.H(p_f)
+        
+        y_pred = np.exp(-y) / np.sum(np.exp(-y))
+
+        # sum_class [ E(pred==class) * entropy(p_f | pred==class) ]
+        H_F_given_Y = 0
+        y_indices = np.max(y_pred == cls_idx, axis=-1)
+        for cls_idx in range(self.num_classes):
+            print (np.mean(y_indices), f[y_indices])
+            H_F_given_Y += torch.mean(y_indices) * self.H(f[y_indices]) 
+
+        print (H_F_given_Y) 
+
+        #for i in range(10):
+        #    print (np.squeeze(dataset1.targets == i).shape) #boolean, 60k
 
 if __name__ == "__main__":
 
     mi = MutualInfo()
         
-    x = torch.ones((1,1,28,28))
+    x = torch.rand((1,1,28,28))
     mi.forward(x)
     
     print ('shape', mi.layer_activations[-1].shape)
+    
     mi.calculate_mi(mi.layer_activations[0], mi.layer_activations[1], mi.layer_activations[-1]) 
 
